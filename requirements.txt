@@ -1,0 +1,28 @@
+# Core
+yfinance>=0.2.36
+pandas>=2.0
+numpy>=1.26
+scikit-learn>=1.4
+xgboost>=2.0
+PyYAML>=6.0
+click>=8.1
+pytest>=8.0
+
+# Technical indicators
+ta>=0.11
+
+# Deep learning
+torch>=2.2
+
+# Gradient boosting
+lightgbm>=4.0
+catboost>=1.2
+
+# Classical time-series
+statsmodels>=0.14
+
+# Volatility modelling
+arch>=6.0
+
+# Regime models
+hmmlearn>=0.3

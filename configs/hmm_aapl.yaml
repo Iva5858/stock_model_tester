@@ -1,0 +1,28 @@
+experiment:
+  name: hmm_aapl
+  description: "3-regime Gaussian HMM on AAPL daily returns"
+
+data:
+  loader: yfinance
+  ticker: AAPL
+  start: "2004-01-01"
+  end: "2024-01-01"
+
+features:
+  target: next_return
+  lags: [1, 2, 3, 5, 10]
+  rolling_windows: [5, 10, 20]
+  technical_indicators: false
+
+model:
+  name: HMM
+  params:
+    n_components: 3
+    covariance_type: full
+    n_iter: 100
+
+evaluation:
+  test_size: 0.2
+  metrics: [rmse, mae, r2, directional_accuracy, sharpe]
+
+seed: 42

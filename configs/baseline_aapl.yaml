@@ -1,0 +1,26 @@
+experiment:
+  name: baseline_aapl
+  description: "Naive last-value baseline on AAPL daily returns"
+
+data:
+  loader: yfinance
+  ticker: AAPL
+  start: "2004-01-01"
+  end: "2024-01-01"
+  missing: ffill
+
+features:
+  target: next_return
+  lags: [1, 2, 3, 5, 10]
+  rolling_windows: [5, 10, 20]
+  technical_indicators: false
+
+model:
+  name: NaiveLastValue
+  params: {}
+
+evaluation:
+  test_size: 0.2
+  metrics: [rmse, mae, r2, directional_accuracy, sharpe]
+
+seed: 42

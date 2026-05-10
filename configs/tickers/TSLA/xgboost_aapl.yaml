@@ -1,0 +1,12 @@
+# TSLA-specific override for xgboost_aapl.yaml
+# TSLA is significantly more volatile than AAPL — benefits from
+# more trees, deeper splits, and a larger lag window.
+model:
+  params:
+    n_estimators: 300
+    max_depth: 8
+    learning_rate: 0.03
+    subsample: 0.7
+
+features:
+  lags: [1, 2, 3, 5, 10, 20]

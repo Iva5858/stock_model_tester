@@ -1,0 +1,7 @@
+# MSFT-specific override for arima_aapl.yaml
+# MSFT returns show slightly more autocorrelation — higher AR order.
+model:
+  params:
+    p: 10
+    d: 0
+    q: 1

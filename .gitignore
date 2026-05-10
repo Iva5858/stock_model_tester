@@ -1,0 +1,13 @@
+results/
+__pycache__/
+*.pyc
+*.pyo
+.env/
+.venv/
+venv/
+*.egg-info/
+.pytest_cache/
+.DS_Store
+catboost_info/
+graphify-out/
+.claude/

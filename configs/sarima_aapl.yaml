@@ -1,0 +1,32 @@
+experiment:
+  name: sarima_aapl
+  description: "SARIMA(1,0,0)(1,0,0,5) on AAPL daily returns — weekly seasonality"
+
+data:
+  loader: yfinance
+  ticker: AAPL
+  start: "2004-01-01"
+  end: "2024-01-01"
+
+features:
+  target: next_return
+  lags: [1, 2, 3, 5, 10]
+  rolling_windows: [5, 10, 20]
+  technical_indicators: false
+
+model:
+  name: SARIMA
+  params:
+    p: 1
+    d: 0
+    q: 0
+    P: 1
+    D: 0
+    Q: 0
+    m: 5
+
+evaluation:
+  test_size: 0.2
+  metrics: [rmse, mae, r2, directional_accuracy, sharpe]
+
+seed: 42

@@ -1,0 +1,29 @@
+experiment:
+  name: lightgbm_aapl
+  description: "LightGBM on AAPL daily returns"
+
+data:
+  loader: yfinance
+  ticker: AAPL
+  start: "2004-01-01"
+  end: "2024-01-01"
+
+features:
+  target: next_return
+  lags: [1, 2, 3, 5, 10]
+  rolling_windows: [5, 10, 20]
+  technical_indicators: true
+
+model:
+  name: LightGBM
+  params:
+    n_estimators: 200
+    learning_rate: 0.05
+    num_leaves: 31
+    subsample: 0.8
+
+evaluation:
+  test_size: 0.2
+  metrics: [rmse, mae, r2, directional_accuracy, sharpe]
+
+seed: 42
