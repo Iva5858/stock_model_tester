@@ -21,6 +21,8 @@ class FeatureConfig:
     step_size: int = 21          # trading days between refits
     min_train_size: int = 500    # minimum rows in the initial training window
     window_size: int = 1000      # fixed window length for cv_method="rolling"
+    horizon: int = 1             # prediction horizon in trading days
+    transforms: Optional[List[dict]] = field(default=None)
 
 
 @dataclass
@@ -41,33 +43,63 @@ class PipelineOutput:
 def build_features(df: pd.DataFrame, config: FeatureConfig) -> PipelineOutput:
     feat = pd.DataFrame(index=df.index)
     ret = df["close"].pct_change()
+    h = config.horizon
 
-    if config.target == "next_return":
-        # Return-based features — stationary, no distribution shift across train/test
-        for lag in config.lags:
-            feat[f"return_lag_{lag}"] = ret.shift(lag)
-        for window in config.rolling_windows:
-            feat[f"rolling_ret_mean_{window}"] = ret.shift(1).rolling(window).mean()
-            feat[f"rolling_ret_std_{window}"] = ret.shift(1).rolling(window).std()
-        feat["volume_delta"] = df["volume"].pct_change().shift(1)
-        feat["target"] = ret.shift(-1)
-
-    elif config.target == "next_close":
-        # Raw price features — kept for short-horizon experiments only
-        for lag in config.lags:
-            feat[f"close_lag_{lag}"] = df["close"].shift(lag)
-        for window in config.rolling_windows:
-            feat[f"rolling_mean_{window}"] = df["close"].shift(1).rolling(window).mean()
-            feat[f"rolling_std_{window}"] = df["close"].shift(1).rolling(window).std()
-        feat["daily_return"] = ret.shift(1)
-        feat["volume_delta"] = df["volume"].pct_change().shift(1)
-        feat["target"] = df["close"].shift(-1)
-
+    if config.transforms is not None:
+        # v2 transform-registry path
+        # YAML parses `- lag_returns: {lags: [...]}` as {"lag_returns": {...}},
+        # so each tspec is a single-key dict: {name: params}
+        from features.base_transform import get_transform
+        for tspec in config.transforms:
+            if "name" in tspec:
+                tname = tspec["name"]
+                tparams = {k: v for k, v in tspec.items() if k != "name"}
+            else:
+                tname, tparams = next(iter(tspec.items()))
+                tparams = tparams or {}
+            transform_cls = get_transform(tname)
+            transform = transform_cls(**tparams)
+            transform.fit_transform(df, feat, is_train=True)
     else:
-        raise ValueError(f"Unsupported target '{config.target}'. Use 'next_return' or 'next_close'.")
+        # v1 flag-based path (backward compat)
+        if config.target in ("next_return", "direction"):
+            for lag in config.lags:
+                feat[f"return_lag_{lag}"] = ret.shift(lag)
+            for window in config.rolling_windows:
+                feat[f"rolling_ret_mean_{window}"] = ret.shift(1).rolling(window).mean()
+                feat[f"rolling_ret_std_{window}"] = ret.shift(1).rolling(window).std()
+            feat["volume_delta"] = df["volume"].pct_change().shift(1)
+        elif config.target == "next_close":
+            for lag in config.lags:
+                feat[f"close_lag_{lag}"] = df["close"].shift(lag)
+            for window in config.rolling_windows:
+                feat[f"rolling_mean_{window}"] = df["close"].shift(1).rolling(window).mean()
+                feat[f"rolling_std_{window}"] = df["close"].shift(1).rolling(window).std()
+            feat["daily_return"] = ret.shift(1)
+            feat["volume_delta"] = df["volume"].pct_change().shift(1)
+        else:
+            raise ValueError(
+                f"Unsupported target '{config.target}'. "
+                "Use 'next_return', 'next_close', or 'direction'."
+            )
 
-    if config.technical_indicators:
-        _add_technical_indicators(df, feat)
+        if config.technical_indicators:
+            _add_technical_indicators(df, feat)
+
+    # Target construction — supports h>1
+    close = df["close"]
+    if config.target == "next_return":
+        feat["target"] = (close.shift(-h) - close) / close
+    elif config.target == "next_close":
+        feat["target"] = close.shift(-h)
+    elif config.target == "direction":
+        diff = close.shift(-h) - close
+        feat["target"] = np.where(diff > 0, 1.0, -1.0)
+    else:
+        raise ValueError(
+            f"Unsupported target '{config.target}'. "
+            "Use 'next_return', 'next_close', or 'direction'."
+        )
 
     feat = feat.dropna()
 
@@ -76,7 +108,6 @@ def build_features(df: pd.DataFrame, config: FeatureConfig) -> PipelineOutput:
     y = feat["target"].values.astype(np.float32)
     dates = feat.index
 
-    # Store full unscaled arrays before any splitting or scaling
     X_full_raw = X.copy()
     y_full = y.copy()
     dates_full = dates
@@ -87,7 +118,6 @@ def build_features(df: pd.DataFrame, config: FeatureConfig) -> PipelineOutput:
     y_train, y_test = y[:split_idx], y[split_idx:]
     test_dates = dates[split_idx:]
 
-    # Fit scaler on train only — no leakage
     scaler = StandardScaler()
     X_train = scaler.fit_transform(X_train)
     X_test = scaler.transform(X_test)

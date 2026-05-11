@@ -1,7 +1,7 @@
 from .base_model import BaseModel, get_model_class, list_models, register
 
 # Core models — always available
-from . import baseline, ml_models  # noqa: F401
+from . import baseline, ml_models, classification_models  # noqa: F401
 
 # Deep learning models — require torch
 try:

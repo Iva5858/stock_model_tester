@@ -1,9 +1,10 @@
 import pandas as pd
 import yfinance as yf
 
-from .base_loader import BaseLoader
+from .base_loader import BaseLoader, register_loader
 
 
+@register_loader("yfinance")
 class YFinanceLoader(BaseLoader):
     def load(self, ticker: str, start: str, end: str, missing: str = "ffill") -> pd.DataFrame:
         raw = yf.download(ticker, start=start, end=end, auto_adjust=True, progress=False)

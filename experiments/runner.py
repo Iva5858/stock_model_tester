@@ -150,6 +150,14 @@ def run_experiment(config_path: str | Path, dry_run: bool = False,
 
     logger.info("Data loaded: %d rows, columns: %s", len(df), list(df.columns))
 
+    # Deprecation notice for v1 configs (no schema_version)
+    if "schema_version" not in cfg:
+        logger.info(
+            "Config '%s' has no schema_version — treating as v1. "
+            "Add schema_version: 2 to suppress this message.",
+            config_path,
+        )
+
     # ── Features ──────────────────────────────────────────────────────────────
     cv_method = eval_cfg.get("cv_method", "holdout")
     feat_config = FeatureConfig(
@@ -162,6 +170,8 @@ def run_experiment(config_path: str | Path, dry_run: bool = False,
         step_size=eval_cfg.get("step_size", 21),
         min_train_size=eval_cfg.get("min_train_size", 500),
         window_size=eval_cfg.get("window_size", 1000),
+        horizon=feat_cfg_raw.get("horizon", 1),
+        transforms=feat_cfg_raw.get("transforms", None),
     )
     pipeline_out = build_features(df, feat_config)
 
@@ -184,7 +194,7 @@ def run_experiment(config_path: str | Path, dry_run: bool = False,
 
     # ── Fit / Predict (holdout or walk-forward) ────────────────────────────────
     if cv_method in ("expanding", "rolling"):
-        y_true, y_pred, test_dates, y_train_ctx, shap_model, shap_X = \
+        y_true, y_pred, test_dates, y_train_ctx, shap_model, shap_X, y_proba = \
             _run_walk_forward(
                 pipeline_out=pipeline_out,
                 ModelClass=ModelClass,
@@ -193,6 +203,7 @@ def run_experiment(config_path: str | Path, dry_run: bool = False,
                 step_size=feat_config.step_size,
                 min_train_size=feat_config.min_train_size,
                 window_size=feat_config.window_size if cv_method == "rolling" else None,
+                model_task=getattr(ModelClass, "task", "regression"),
             )
     else:
         model = ModelClass(**model_params)
@@ -212,10 +223,23 @@ def run_experiment(config_path: str | Path, dry_run: bool = False,
         test_dates = test_dates[-min_len:]
         shap_X = shap_X[-min_len:]
 
+        # For classification, get calibrated probabilities for probability-based metrics
+        y_proba = None
+        if getattr(ModelClass, "task", "regression") == "classification" and hasattr(model, "predict_proba"):
+            y_proba = model.predict_proba(shap_X)
+
     # ── Metrics ───────────────────────────────────────────────────────────────
-    metric_names = eval_cfg.get("metrics", ["rmse", "mae", "r2",
-                                            "directional_accuracy", "sharpe"])
-    metrics = compute_metrics(y_true, y_pred, metric_names, y_train=y_train_ctx)
+    model_task = getattr(ModelClass, "task", "regression")
+    if model_task == "classification":
+        default_metrics = ["auc_roc", "log_loss", "brier_score",
+                           "precision_up", "recall_up", "f1_up", "directional_accuracy"]
+    else:
+        default_metrics = ["rmse", "mae", "r2", "directional_accuracy", "sharpe"]
+    metric_names = eval_cfg.get("metrics", default_metrics)
+    # Use probabilities for classification metrics when available; binary preds otherwise
+    y_for_metrics = y_proba if (model_task == "classification" and y_proba is not None) else y_pred
+    metrics = compute_metrics(y_true, y_for_metrics, metric_names, y_train=y_train_ctx,
+                              task=model_task)
     metrics["cv_method"] = cv_method
 
     elapsed = time.time() - t0
@@ -225,7 +249,10 @@ def run_experiment(config_path: str | Path, dry_run: bool = False,
     # ── Save ──────────────────────────────────────────────────────────────────
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     experiment_id = f"{model_name}_{ticker}_{timestamp}"
-    results_dir = Path("results").resolve() / ticker / model_name / experiment_id
+    horizon = feat_config.horizon
+    target_name = feat_config.target
+    results_dir = (Path("results").resolve() / ticker / model_name
+                   / f"h{horizon}" / target_name / experiment_id)
 
     save_results(
         results_dir=results_dir,
@@ -235,6 +262,13 @@ def run_experiment(config_path: str | Path, dry_run: bool = False,
         dates=test_dates,
         config=cfg,
         feature_names=pipeline_out.feature_names,
+        ticker=ticker,
+        model=model_name,
+        horizon=horizon,
+        target=target_name,
+        n_train=len(pipeline_out.y_train),
+        n_test=len(pipeline_out.y_test),
+        elapsed_s=elapsed,
     )
 
     # SHAP feature importance (tree models only; silent fallback)
@@ -252,10 +286,12 @@ def _run_walk_forward(
     step_size: int,
     min_train_size: int,
     window_size: int | None,
+    model_task: str = "regression",
 ):
     """Run walk-forward (expanding or rolling window) cross-validation.
 
-    Returns aggregated (y_true, y_pred, test_dates, y_train_ctx, last_model, last_X_te).
+    Returns (y_true, y_pred, test_dates, y_train_ctx, last_model, last_X_te, y_proba).
+    y_proba is the probability array for classification models (None for regression).
     Each fold re-fits the model and re-scales from scratch to prevent leakage.
 
     References: rpaper_1 (Turgay 2025), rpaper_8 (Mistol & Möhler 2023),
@@ -282,7 +318,7 @@ def _run_walk_forward(
     logger.info("Walk-forward (%s): %d folds", cv_method, len(splits))
 
     all_y_true, all_y_pred, all_dates = [], [], []
-    # Collect all training data preceding the test window for OOS R² benchmark
+    all_y_proba = []  # calibrated probabilities for classification models
     y_train_ctx_list = []
     last_model = None
     last_X_te = None
@@ -304,12 +340,17 @@ def _run_walk_forward(
         last_model = m
         last_X_te = X_te[-mn:]
 
+        if model_task == "classification" and hasattr(m, "predict_proba"):
+            probas = m.predict_proba(X_te)
+            all_y_proba.extend(probas[-mn:])
+
     y_true = np.array(all_y_true, dtype=np.float32)
     y_pred = np.array(all_y_pred, dtype=np.float32)
+    y_proba = np.array(all_y_proba, dtype=np.float32) if all_y_proba else None
     y_train_ctx = np.array(y_train_ctx_list, dtype=np.float32)
     test_dates = pipeline_out.dates_full.__class__(all_dates)
 
-    return y_true, y_pred, test_dates, y_train_ctx, last_model, last_X_te
+    return y_true, y_pred, test_dates, y_train_ctx, last_model, last_X_te, y_proba
 
 
 def _print_summary(exp_id: str, metrics: dict, elapsed: float, results_dir: Path) -> None:

@@ -137,35 +137,139 @@ def diebold_mariano(y_true: np.ndarray, y_pred1: np.ndarray,
     return float(dm_stat), p_val
 
 
+# ── Classification metrics ─────────────────────────────────────────────────────
+
+def auc_roc(y_true: np.ndarray, y_pred: np.ndarray) -> float:
+    """Area under the ROC curve.  y_pred interpreted as P(up) in [0,1] when
+    possible, else as a signed score with 0 as boundary."""
+    from sklearn.metrics import roc_auc_score
+    try:
+        labels = np.sign(y_true)
+        labels_bin = (labels > 0).astype(int)
+        if len(np.unique(labels_bin)) < 2:
+            return float("nan")
+        # If y_pred already in [0,1] use as-is; else normalize to probability
+        score = y_pred if y_pred.max() <= 1.0 and y_pred.min() >= 0 else \
+            (y_pred - y_pred.min()) / (y_pred.max() - y_pred.min() + 1e-12)
+        return float(roc_auc_score(labels_bin, score))
+    except Exception:
+        return float("nan")
+
+
+def log_loss_metric(y_true: np.ndarray, y_pred: np.ndarray) -> float:
+    """Log-loss for classification. y_pred as probabilities P(up)."""
+    from sklearn.metrics import log_loss
+    try:
+        labels_bin = (np.sign(y_true) > 0).astype(int)
+        if len(np.unique(labels_bin)) < 2:
+            return float("nan")
+        proba = np.clip(y_pred, 1e-7, 1 - 1e-7)
+        return float(log_loss(labels_bin, proba))
+    except Exception:
+        return float("nan")
+
+
+def brier_score_metric(y_true: np.ndarray, y_pred: np.ndarray) -> float:
+    """Brier score: MSE between predicted probabilities and binary outcomes."""
+    try:
+        labels_bin = (np.sign(y_true) > 0).astype(float)
+        proba = np.clip(y_pred, 0.0, 1.0)
+        return float(np.mean((proba - labels_bin) ** 2))
+    except Exception:
+        return float("nan")
+
+
+def precision_up(y_true: np.ndarray, y_pred: np.ndarray) -> float:
+    """Precision for predicting the 'up' class (+1)."""
+    from sklearn.metrics import precision_score
+    try:
+        labels = np.sign(y_true)
+        preds = np.sign(y_pred)
+        return float(precision_score(labels, preds, pos_label=1.0,
+                                     zero_division=0))
+    except Exception:
+        return float("nan")
+
+
+def recall_up(y_true: np.ndarray, y_pred: np.ndarray) -> float:
+    """Recall for predicting the 'up' class (+1)."""
+    from sklearn.metrics import recall_score
+    try:
+        labels = np.sign(y_true)
+        preds = np.sign(y_pred)
+        return float(recall_score(labels, preds, pos_label=1.0,
+                                  zero_division=0))
+    except Exception:
+        return float("nan")
+
+
+def f1_up(y_true: np.ndarray, y_pred: np.ndarray) -> float:
+    """F1 score for the 'up' class (+1)."""
+    from sklearn.metrics import f1_score
+    try:
+        labels = np.sign(y_true)
+        preds = np.sign(y_pred)
+        return float(f1_score(labels, preds, pos_label=1.0, zero_division=0))
+    except Exception:
+        return float("nan")
+
+
+# ── Metric registry ───────────────────────────────────────────────────────────
+
 # Metrics that require y_train context (not computable from y_true/y_pred alone)
 _CONTEXT_METRICS = {"oos_r2"}
 
-_METRIC_FNS = {
-    "rmse": rmse,
-    "mae": mae,
-    "mape": mape,
-    "r2": r2,
-    "directional_accuracy": directional_accuracy,
-    "sharpe": sharpe_ratio,
-    "oos_r2": oos_r2,
-    "rank_ic": rank_ic,
-    "max_drawdown": max_drawdown,
-    "calmar_ratio": calmar_ratio,
+_METRIC_FNS: dict = {
+    # Regression metrics
+    "rmse":                {"fn": rmse,                "task": "regression"},
+    "mae":                 {"fn": mae,                 "task": "regression"},
+    "mape":                {"fn": mape,                "task": "regression"},
+    "r2":                  {"fn": r2,                  "task": "regression"},
+    "directional_accuracy":{"fn": directional_accuracy,"task": "both"},
+    "sharpe":              {"fn": sharpe_ratio,        "task": "regression"},
+    "oos_r2":              {"fn": oos_r2,              "task": "regression"},
+    "rank_ic":             {"fn": rank_ic,             "task": "regression"},
+    "max_drawdown":        {"fn": max_drawdown,        "task": "regression"},
+    "calmar_ratio":        {"fn": calmar_ratio,        "task": "regression"},
+    # Classification metrics
+    "auc_roc":             {"fn": auc_roc,             "task": "classification"},
+    "log_loss":            {"fn": log_loss_metric,     "task": "classification"},
+    "brier_score":         {"fn": brier_score_metric,  "task": "classification"},
+    "precision_up":        {"fn": precision_up,        "task": "classification"},
+    "recall_up":           {"fn": recall_up,           "task": "classification"},
+    "f1_up":               {"fn": f1_up,               "task": "classification"},
 }
+
+_DEFAULT_REGRESSION_METRICS = [
+    m for m, v in _METRIC_FNS.items()
+    if v["task"] in ("regression", "both") and m not in _CONTEXT_METRICS
+]
 
 
 def compute_metrics(y_true: np.ndarray, y_pred: np.ndarray,
                     metric_names: list[str] | None = None,
-                    y_train: np.ndarray | None = None) -> dict:
+                    y_train: np.ndarray | None = None,
+                    task: str = "regression") -> dict:
     """Compute evaluation metrics.
 
     Pass y_train to enable oos_r2 (Campbell-Thompson OOS R² vs. prevailing mean).
+    Pass task='classification' to get classification-only default metrics.
     """
     if metric_names is None:
-        metric_names = [m for m in _METRIC_FNS if m not in _CONTEXT_METRICS]
+        if task == "classification":
+            metric_names = [
+                m for m, v in _METRIC_FNS.items()
+                if v["task"] in ("classification", "both") and m not in _CONTEXT_METRICS
+            ]
+        else:
+            metric_names = _DEFAULT_REGRESSION_METRICS
+
     result = {}
     for name in metric_names:
-        fn = _METRIC_FNS[name]
+        entry = _METRIC_FNS.get(name)
+        if entry is None:
+            raise ValueError(f"Unknown metric '{name}'. Available: {list(_METRIC_FNS)}")
+        fn = entry["fn"]
         if name in _CONTEXT_METRICS:
             result[name] = fn(y_true, y_pred, y_train)
         else:

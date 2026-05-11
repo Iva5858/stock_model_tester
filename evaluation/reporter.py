@@ -16,10 +16,29 @@ def save_results(
     dates: pd.DatetimeIndex,
     config: dict,
     feature_names: list[str],
+    *,
+    ticker: str = "",
+    model: str = "",
+    horizon: int = 1,
+    target: str = "next_return",
+    n_train: int = 0,
+    n_test: int = 0,
+    elapsed_s: float = 0.0,
 ) -> None:
     results_dir.mkdir(parents=True, exist_ok=True)
 
-    payload = {**metrics, "feature_names": feature_names}
+    payload = {
+        "schema_version": 2,
+        "ticker": ticker,
+        "model": model,
+        "horizon": horizon,
+        "target": target,
+        "n_train": n_train,
+        "n_test": n_test,
+        "elapsed_s": elapsed_s,
+        **metrics,
+        "feature_names": feature_names,
+    }
     (results_dir / "metrics.json").write_text(
         json.dumps(payload, indent=2, default=_json_serial)
     )
@@ -65,26 +84,21 @@ def compare_multi_ticker(tickers: list[str], results_root: Path,
     Rows = models, columns = tickers, values = the chosen metric from the
     latest run of each (ticker, model) pair.
     """
+    from .results_store import FileResultsStore
+    store = FileResultsStore(results_root)
     records: dict[str, dict[str, float]] = {}
 
     for ticker in tickers:
-        ticker_dir = results_root / ticker.upper()
-        if not ticker_dir.exists():
-            continue
-        for model_dir in sorted(ticker_dir.iterdir()):
-            if not model_dir.is_dir():
-                continue
-            runs = sorted(d for d in model_dir.iterdir() if d.is_dir())
-            if not runs:
-                continue
-            metrics_file = runs[-1] / "metrics.json"
-            if not metrics_file.exists():
-                continue
-            data = json.loads(metrics_file.read_text())
-            model_name = model_dir.name
+        ticker_upper = ticker.upper()
+        exps = store.list_experiments(ticker=ticker_upper)
+        # latest per model
+        latest: dict[str, "ExperimentRecord"] = {}
+        for rec in exps:
+            latest[rec.model] = rec
+        for model_name, rec in latest.items():
             if model_name not in records:
                 records[model_name] = {}
-            records[model_name][ticker.upper()] = data.get(metric, float("nan"))
+            records[model_name][ticker_upper] = rec.metrics.get(metric, float("nan"))
 
     if not records:
         return pd.DataFrame()

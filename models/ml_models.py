@@ -10,6 +10,12 @@ from .base_model import BaseModel, register
 @register("XGBoost")
 class XGBoostModel(BaseModel):
     name = "XGBoost"
+    search_space = {
+        "n_estimators": {"type": "int", "low": 50, "high": 500},
+        "max_depth": {"type": "int", "low": 3, "high": 10},
+        "learning_rate": {"type": "float", "low": 0.01, "high": 0.3, "log": True},
+        "subsample": {"type": "float", "low": 0.6, "high": 1.0},
+    }
 
     def __init__(self, n_estimators: int = 100, max_depth: int = 6,
                  learning_rate: float = 0.1, subsample: float = 1.0,
@@ -37,6 +43,10 @@ class XGBoostModel(BaseModel):
 @register("RandomForest")
 class RandomForestModel(BaseModel):
     name = "RandomForest"
+    search_space = {
+        "n_estimators": {"type": "int", "low": 50, "high": 500},
+        "max_depth": {"type": "int", "low": 3, "high": 20},
+    }
 
     def __init__(self, n_estimators: int = 100, max_depth: int = None,
                  random_state: int = 42, **kwargs):
@@ -82,6 +92,9 @@ class SVRModel(BaseModel):
 @register("Ridge")
 class RidgeModel(BaseModel):
     name = "Ridge"
+    search_space = {
+        "alpha": {"type": "float", "low": 0.001, "high": 100.0, "log": True},
+    }
 
     def __init__(self, alpha: float = 1.0, **kwargs):
         self.params = dict(alpha=float(alpha))
@@ -100,6 +113,9 @@ class RidgeModel(BaseModel):
 @register("Lasso")
 class LassoModel(BaseModel):
     name = "Lasso"
+    search_space = {
+        "alpha": {"type": "float", "low": 0.0001, "high": 10.0, "log": True},
+    }
 
     def __init__(self, alpha: float = 0.001, **kwargs):
         self.params = dict(alpha=float(alpha))
@@ -118,6 +134,10 @@ class LassoModel(BaseModel):
 @register("ElasticNet")
 class ElasticNetModel(BaseModel):
     name = "ElasticNet"
+    search_space = {
+        "alpha": {"type": "float", "low": 0.0001, "high": 10.0, "log": True},
+        "l1_ratio": {"type": "float", "low": 0.0, "high": 1.0},
+    }
 
     def __init__(self, alpha: float = 0.01, l1_ratio: float = 0.5, **kwargs):
         self.params = dict(alpha=float(alpha), l1_ratio=float(l1_ratio))
@@ -136,6 +156,12 @@ class ElasticNetModel(BaseModel):
 @register("LightGBM")
 class LightGBMModel(BaseModel):
     name = "LightGBM"
+    search_space = {
+        "n_estimators": {"type": "int", "low": 50, "high": 500},
+        "max_depth": {"type": "int", "low": 3, "high": 12},
+        "learning_rate": {"type": "float", "low": 0.01, "high": 0.3, "log": True},
+        "num_leaves": {"type": "int", "low": 15, "high": 127},
+    }
 
     def __init__(self, n_estimators: int = 200, max_depth: int = -1,
                  learning_rate: float = 0.05, num_leaves: int = 31,
@@ -171,6 +197,11 @@ class LightGBMModel(BaseModel):
 @register("CatBoost")
 class CatBoostModel(BaseModel):
     name = "CatBoost"
+    search_space = {
+        "iterations": {"type": "int", "low": 50, "high": 500},
+        "depth": {"type": "int", "low": 3, "high": 10},
+        "learning_rate": {"type": "float", "low": 0.01, "high": 0.3, "log": True},
+    }
 
     def __init__(self, iterations: int = 200, depth: int = 6,
                  learning_rate: float = 0.05, random_state: int = 42, **kwargs):

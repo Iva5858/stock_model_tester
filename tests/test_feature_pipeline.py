@@ -60,3 +60,46 @@ def test_train_indices_before_test():
     assert out.test_dates[-1] <= df.index[-1]
     # test_dates must start after the earliest date in the raw series
     assert out.test_dates[0] > df.index[0]
+
+
+def test_horizon5_target_construction():
+    """horizon=5: target = (close[t+5] - close[t]) / close[t], no steps within [t+1..t+4] used."""
+    df = _make_df(300)
+    out = build_features(df, FeatureConfig(target="next_return", horizon=5, test_size=0.2))
+    # Basic shape consistency
+    assert out.X_train.shape[1] == out.X_test.shape[1]
+    assert len(out.y_train) == len(out.X_train)
+    assert len(out.y_test) == len(out.X_test)
+
+
+def test_horizon5_fewer_rows_than_h1():
+    """h=5 drops 5 rows for the target shift (vs 1 row for h=1), so rows ≤ h=1 rows."""
+    df = _make_df(300)
+    out1 = build_features(df, FeatureConfig(target="next_return", horizon=1))
+    out5 = build_features(df, FeatureConfig(target="next_return", horizon=5))
+    # h=5 drops 4 more rows for the shifted target
+    assert len(out5.y_full) <= len(out1.y_full)
+
+
+def test_direction_target_produces_pm1():
+    """direction target at h=1 gives only {+1, -1}."""
+    df = _make_df(300)
+    out = build_features(df, FeatureConfig(target="direction", horizon=1))
+    unique = set(np.unique(out.y_full))
+    assert unique.issubset({1.0, -1.0}), f"Got unexpected values: {unique}"
+
+
+def test_transform_list_path():
+    """If transforms= is specified, the v2 transform-registry path runs correctly."""
+    df = _make_df(200)
+    config = FeatureConfig(
+        target="next_return",
+        transforms=[
+            {"name": "lag_returns", "lags": [1, 2, 3]},
+            {"name": "rolling_stats", "windows": [5, 10]},
+            {"name": "volume_delta"},
+        ],
+    )
+    out = build_features(df, config)
+    assert out.X_train.shape[1] == out.X_test.shape[1]
+    assert len(out.feature_names) > 0

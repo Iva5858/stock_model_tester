@@ -84,8 +84,8 @@ def test_compare_command(tmp_path):
         run_result = runner.invoke(cli, ["run", "--config", str(config_file)])
         assert run_result.exit_code == 0, run_result.output
 
-        # Results live 3 levels deep: results/<ticker>/<model>/<experiment>/
-        experiment_dirs = sorted((tmp_path / "results").glob("*/*/*"))
+        # Results live 5 levels deep in v2: results/<ticker>/<model>/h<H>/<target>/<exp>/
+        experiment_dirs = sorted((tmp_path / "results").glob("*/*/*/*/*"))
         assert len(experiment_dirs) >= 1, "No experiment directories found"
 
         result = runner.invoke(cli, ["compare"] + [str(d) for d in experiment_dirs])

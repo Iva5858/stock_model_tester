@@ -7,3 +7,4 @@ from .metrics import (
     calmar_ratio,
 )
 from .reporter import compare_multi_ticker, compare_results, save_results
+from .results_store import ResultsStore, FileResultsStore, ExperimentRecord

@@ -1,0 +1,6 @@
+model:
+  params:
+    learning_rate: 0.010165372787553171
+    max_depth: 3
+    n_estimators: 318
+    subsample: 0.7799469279693775

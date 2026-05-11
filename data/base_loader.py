@@ -2,6 +2,22 @@ from abc import ABC, abstractmethod
 import pandas as pd
 
 
+_LOADER_REGISTRY: dict = {}
+
+
+def register_loader(name: str):
+    def decorator(cls):
+        _LOADER_REGISTRY[name] = cls
+        return cls
+    return decorator
+
+
+def get_loader_class(name: str):
+    if name not in _LOADER_REGISTRY:
+        raise ValueError(f"Unknown loader '{name}'. Registered: {list(_LOADER_REGISTRY)}")
+    return _LOADER_REGISTRY[name]
+
+
 class BaseLoader(ABC):
     """Abstract interface for all data loaders."""
 

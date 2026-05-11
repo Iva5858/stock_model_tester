@@ -11,3 +11,5 @@ venv/
 catboost_info/
 graphify-out/
 .claude/
+TESTING_ADVANCED.md
+strategy_recommendation.yaml

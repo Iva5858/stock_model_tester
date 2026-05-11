@@ -30,3 +30,9 @@ hmmlearn>=0.3
 
 # Feature importance / explainability (rpaper_8)
 shap>=0.44
+
+# Macro data
+fredapi>=0.5
+
+# Hyperparameter optimization
+optuna>=3.0
