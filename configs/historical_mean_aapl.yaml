@@ -1,6 +1,6 @@
 experiment:
-  name: xgboost_aapl
-  description: "XGBoost on AAPL daily returns"
+  name: historical_mean_aapl
+  description: "Prevailing mean baseline (Goyal-Welch 2008) on AAPL daily returns"
 
 data:
   loader: yfinance
@@ -13,15 +13,11 @@ features:
   target: next_return
   lags: [1, 2, 3, 5, 10]
   rolling_windows: [5, 10, 20]
-  technical_indicators: true
+  technical_indicators: false
 
 model:
-  name: XGBoost
-  params:
-    n_estimators: 200
-    max_depth: 6
-    learning_rate: 0.05
-    subsample: 0.8
+  name: HistoricalMean
+  params: {}
 
 evaluation:
   test_size: 0.2

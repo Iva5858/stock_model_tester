@@ -54,7 +54,39 @@ def test_sharpe_returns_float():
 
 def test_compute_metrics_keys():
     result = compute_metrics(Y_TRUE, Y_PRED)
-    assert set(result) == {"rmse", "mae", "mape", "r2", "directional_accuracy", "sharpe"}
+    # oos_r2 is excluded from default because it requires y_train context
+    expected = {"rmse", "mae", "mape", "r2", "directional_accuracy", "sharpe",
+                "rank_ic", "max_drawdown", "calmar_ratio"}
+    assert set(result) == expected
+
+
+def test_oos_r2_requires_y_train():
+    from evaluation.metrics import oos_r2
+    import numpy as np
+    y_train = np.random.randn(200).astype("float32")
+    # Returns nan without y_train
+    assert np.isnan(oos_r2(Y_TRUE, Y_PRED, None))
+    # Returns a float with y_train
+    val = oos_r2(Y_TRUE, Y_PRED, y_train)
+    assert isinstance(val, float)
+
+
+def test_rank_ic_range():
+    from evaluation.metrics import rank_ic
+    val = rank_ic(Y_TRUE, Y_PRED)
+    assert -1.0 <= val <= 1.0
+
+
+def test_diebold_mariano():
+    from evaluation.metrics import diebold_mariano
+    import numpy as np
+    rng = np.random.default_rng(0)
+    y_t = rng.normal(0, 0.01, 100).astype("float32")
+    p1 = y_t * 0.5 + rng.normal(0, 0.005, 100).astype("float32")
+    p2 = rng.normal(0, 0.015, 100).astype("float32")
+    dm_stat, p_val = diebold_mariano(y_t, p1, p2)
+    assert isinstance(dm_stat, float)
+    assert 0.0 <= p_val <= 1.0
 
 
 def test_compute_metrics_subset():

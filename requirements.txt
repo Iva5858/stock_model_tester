@@ -7,6 +7,7 @@ xgboost>=2.0
 PyYAML>=6.0
 click>=8.1
 pytest>=8.0
+scipy>=1.12
 
 # Technical indicators
 ta>=0.11
@@ -26,3 +27,6 @@ arch>=6.0
 
 # Regime models
 hmmlearn>=0.3
+
+# Feature importance / explainability (rpaper_8)
+shap>=0.44

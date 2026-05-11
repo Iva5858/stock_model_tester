@@ -40,3 +40,29 @@ class RollingMeanBaseline(BaseModel):
 
     def get_params(self) -> dict:
         return {"window": self.window}
+
+
+@register("HistoricalMean")
+class HistoricalMean(BaseModel):
+    """Predicts all test steps as the full training set (prevailing) mean.
+
+    This is the canonical hard-to-beat OOS benchmark from Goyal & Welch (2008).
+    Any model that cannot beat HistoricalMean on OOS R² has no predictive value.
+
+    References: fpaper_2 (Goyal & Welch 2008), fpaper_3 (Campbell & Thompson 2008),
+                rpaper_1 (Turgay 2025).
+    """
+
+    name = "HistoricalMean"
+
+    def __init__(self, **kwargs):
+        self._mean: float = 0.0
+
+    def fit(self, X_train: np.ndarray, y_train: np.ndarray) -> None:
+        self._mean = float(np.mean(y_train))
+
+    def predict(self, X_test: np.ndarray) -> np.ndarray:
+        return np.full(len(X_test), self._mean, dtype=np.float32)
+
+    def get_params(self) -> dict:
+        return {"mean": round(self._mean, 8)}

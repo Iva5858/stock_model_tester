@@ -460,5 +460,99 @@ def list_results(results_dir: str, ticker: str, tickers: str, latest_only: bool)
     click.echo("\n" + df.to_string() + "\n")
 
 
+# ── ensemble ──────────────────────────────────────────────────────────────────
+
+@cli.command()
+@click.option("--ticker", required=True,
+              help="Ticker whose latest model predictions to ensemble (e.g. AAPL).")
+@click.option("--metric", default="directional_accuracy", show_default=True,
+              help="Metric printed in the summary.")
+def ensemble(ticker: str, metric: str):
+    """Build a simple forecast combination (equal-weight average) across all models.
+
+    Loads the latest predictions.csv from every model for the given ticker,
+    aligns on shared dates, averages predictions, then saves the result to
+    results/<TICKER>/Ensemble/.
+
+    Research basis: simple forecast combinations consistently outperform individual
+    models in out-of-sample tests (rpaper_1, rpaper_2, rpaper_8).
+    """
+    import pandas as pd
+    import numpy as np
+    from datetime import datetime as _dt
+    from evaluation.metrics import compute_metrics
+    from evaluation.reporter import save_results
+
+    ticker = ticker.upper()
+    root = Path("results") / ticker
+    if not root.exists():
+        click.echo(f"No results found for '{ticker}'. Run experiments first.")
+        return
+
+    # Collect latest predictions.csv per model
+    pred_frames: dict[str, pd.DataFrame] = {}
+    for model_dir in sorted(root.iterdir()):
+        if not model_dir.is_dir() or model_dir.name == "Ensemble":
+            continue
+        runs = sorted(d for d in model_dir.iterdir() if d.is_dir())
+        if not runs:
+            continue
+        preds_path = runs[-1] / "predictions.csv"
+        if not preds_path.exists():
+            continue
+        frame = pd.read_csv(preds_path, parse_dates=["date"])
+        frame = frame.set_index("date").sort_index()
+        pred_frames[model_dir.name] = frame
+
+    if len(pred_frames) < 2:
+        click.echo(f"Need at least 2 models with results for '{ticker}'. "
+                   f"Found: {list(pred_frames)}")
+        return
+
+    # Align on common dates
+    common_dates = None
+    for frame in pred_frames.values():
+        if common_dates is None:
+            common_dates = frame.index
+        else:
+            common_dates = common_dates.intersection(frame.index)
+
+    if len(common_dates) == 0:
+        click.echo("No common dates across model predictions. Cannot ensemble.")
+        return
+
+    y_true = pred_frames[list(pred_frames)[0]].loc[common_dates, "y_true"].values.astype("float32")
+    y_pred = np.mean(
+        np.stack([f.loc[common_dates, "y_pred"].values for f in pred_frames.values()]),
+        axis=0,
+    ).astype("float32")
+
+    metric_names = ["rmse", "mae", "r2", "directional_accuracy", "sharpe",
+                    "rank_ic", "max_drawdown", "calmar_ratio"]
+    metrics = compute_metrics(y_true, y_pred, metric_names)
+    metrics["n_models"] = len(pred_frames)
+
+    timestamp = _dt.now().strftime("%Y%m%d_%H%M%S")
+    exp_id = f"Ensemble_{ticker}_{timestamp}"
+    results_dir = Path("results").resolve() / ticker / "Ensemble" / exp_id
+
+    save_results(
+        results_dir=results_dir,
+        metrics=metrics,
+        y_true=y_true,
+        y_pred=y_pred,
+        dates=pd.DatetimeIndex(common_dates),
+        config={"ensemble": {"ticker": ticker, "models": sorted(pred_frames.keys())}},
+        feature_names=[],
+    )
+
+    click.echo(f"\n  Ensemble ({len(pred_frames)} models) — {ticker}")
+    click.echo(f"  Models: {', '.join(sorted(pred_frames.keys()))}")
+    click.echo(f"  {metric}: {metrics.get(metric, float('nan')):.4f}")
+    click.echo(f"  directional_accuracy: {metrics.get('directional_accuracy', float('nan')):.4f}")
+    click.echo(f"  sharpe:               {metrics.get('sharpe', float('nan')):.4f}")
+    click.echo(f"  Results saved to: {results_dir}\n")
+
+
 if __name__ == "__main__":
     cli()

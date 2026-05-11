@@ -23,6 +23,6 @@ model:
 
 evaluation:
   test_size: 0.2
-  metrics: [rmse, mae, r2, directional_accuracy, sharpe]
+  metrics: [rmse, mae, r2, directional_accuracy, sharpe, oos_r2, rank_ic, max_drawdown, calmar_ratio]
 
 seed: 42

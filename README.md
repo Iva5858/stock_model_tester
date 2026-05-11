@@ -1,6 +1,6 @@
 # Stock Market Prediction & Evaluation Framework
 
-A Python framework for registering, running, and comparing stock return prediction models across 18 algorithms. Supports multi-ticker analysis with per-ticker hyperparameter overrides. Designed as a clean evaluation harness — not a trading system.
+A Python framework for registering, running, and comparing stock return prediction models across 20 algorithms. Supports multi-ticker analysis, per-ticker hyperparameter overrides, walk-forward cross-validation, SHAP feature importance, and forecast ensembling. Designed as a clean evaluation harness — not a trading system.
 
 ---
 
@@ -54,6 +54,7 @@ python run.py compare --tickers AAPL,TSLA,MSFT --metric directional_accuracy
 | `run-all --tickers AAPL,TSLA,MSFT` | Run all configs × all tickers in parallel |
 | `run-all --workers 4` | Parallel workers (default: 2) |
 | `run-all --no-compare` | Skip the auto-comparison at the end |
+| `ensemble --ticker AAPL` | Equal-weight forecast combination across all models |
 | `report --ticker AAPL` | Generate interactive HTML dashboard (auto-opens) |
 | `report --tickers AAPL,TSLA,MSFT` | Generate reports for multiple tickers |
 | `report --no-open` | Generate HTML without opening browser |
@@ -103,13 +104,14 @@ results/
 
 ---
 
-## Available Models (18)
+## Available Models (20)
 
 ### Baseline
 | Name | Description |
 |------|-------------|
 | `NaiveLastValue` | Predicts next return = last observed return |
 | `RollingMean` | Predicts next return = rolling mean of last N returns |
+| `HistoricalMean` | Predicts next return = full training set mean (Goyal-Welch 2008 prevailing-mean benchmark — the canonical OOS floor) |
 
 ### Linear / Regularised
 | Name | Description |
@@ -145,6 +147,11 @@ results/
 
 > **Note:** PyTorch-based models (LSTM, Transformer, TCN, N-BEATS, N-HiTS) are disabled due to an OpenMP library conflict on macOS ARM between PyTorch's bundled `libomp` and Homebrew's `libomp`. The model classes remain in the codebase for reference and can be re-enabled on a CUDA Linux system.
 
+### Ensemble (post-processing)
+| Name | Description |
+|------|-------------|
+| `Ensemble` | Equal-weight average of all model predictions for a ticker. Run via `python run.py ensemble --ticker AAPL`. Consistently outperforms individual models OOS (Turgay 2025, Rossi 2018, Mistol & Möhler 2023). |
+
 ---
 
 ## Config Schema
@@ -176,8 +183,12 @@ model:
     subsample: 0.8
 
 evaluation:
-  test_size: 0.2
-  metrics: [rmse, mae, r2, directional_accuracy, sharpe]
+  test_size: 0.2              # used when cv_method: holdout
+  metrics: [rmse, mae, r2, directional_accuracy, sharpe, oos_r2, rank_ic, max_drawdown, calmar_ratio]
+  cv_method: holdout          # holdout | expanding | rolling (walk-forward)
+  step_size: 21               # trading days per refit (expanding/rolling only)
+  min_train_size: 500         # minimum initial training rows (expanding/rolling only)
+  window_size: 1000           # fixed train window rows (rolling only)
 
 seed: 42
 ```
@@ -251,13 +262,50 @@ Override files are optional — if none exists for a (ticker, config) pair, the 
 
 ## Metrics
 
-| Metric | Plain English | Direction |
-|--------|--------------|-----------|
-| `rmse` | Average prediction error | Lower is better |
-| `mae` | Typical prediction error | Lower is better |
-| `r2` | Predictive power (near 0 is normal for daily returns) | Higher is better |
-| `directional_accuracy` | % of days the model correctly called up vs. down | Higher is better |
-| `sharpe` | Risk-adjusted return of following model signals (long/short) | Higher is better |
+| Metric | Plain English | Direction | Research Basis |
+|--------|--------------|-----------|----------------|
+| `rmse` | Average prediction error | Lower is better | Standard |
+| `mae` | Typical prediction error | Lower is better | Standard |
+| `r2` | Predictive power (near 0 is normal for daily returns) | Higher is better | Standard |
+| `directional_accuracy` | % of days the model correctly called up vs. down | Higher is better | Standard |
+| `sharpe` | Risk-adjusted return of following model signals (long/short) | Higher is better | Standard |
+| `oos_r2` | Improvement in MSE over the historical mean baseline (Campbell-Thompson 2008) | Higher is better | fpaper_2, fpaper_3, rpaper_8 |
+| `rank_ic` | Spearman rank correlation between predictions and actuals | Higher is better | rpaper_5, rpaper_8 |
+| `max_drawdown` | Worst peak-to-trough loss of the long/short strategy | Closer to 0 is better | rpaper_5 |
+| `calmar_ratio` | Annualised strategy return ÷ absolute max drawdown | Higher is better | rpaper_5 |
+
+### Notes on `oos_r2`
+`oos_r2` requires `y_train` context (the training set mean acts as the benchmark). It is automatically computed when you include it in `evaluation.metrics` — the runner passes `y_train` internally. A positive `oos_r2` means the model beats the prevailing mean; negative means it is worse than predicting the historical average. Per Goyal & Welch (2008), most predictors produce negative OOS R².
+
+## Walk-Forward Evaluation
+
+The static holdout split is easy but misleading: it trains on the distant past and tests once. Walk-forward evaluation replicates real investment behaviour.
+
+```yaml
+evaluation:
+  cv_method: expanding   # train grows from start; refit every step_size days
+  # cv_method: rolling   # fixed-length train window slides forward
+  step_size: 21          # refit monthly (~21 trading days)
+  min_train_size: 500    # ~2 years of daily data as initial training window
+  window_size: 1000      # rolling only: ~4-year sliding window
+```
+
+Walk-forward mode aggregates predictions across all folds, computes metrics on the full out-of-sample series, and saves results identically to holdout mode. Scaling is re-fit inside each fold to prevent leakage.
+
+## SHAP Feature Importance
+
+For tree-based models (XGBoost, RandomForest, LightGBM, CatBoost), SHAP values are automatically computed after each run and saved alongside metrics:
+
+```
+results/AAPL/XGBoost/<experiment_id>/
+├── metrics.json
+├── predictions.csv
+├── config_snapshot.yaml
+├── shap_values.csv          ← per-sample SHAP values (rows × features)
+└── feature_importance.csv   ← mean |SHAP| per feature, sorted descending
+```
+
+Requires `shap` (included in `requirements.txt`). Silently skipped for non-tree models.
 
 ---
 

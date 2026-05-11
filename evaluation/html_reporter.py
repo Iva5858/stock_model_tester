@@ -13,6 +13,7 @@ import pandas as pd
 _CATEGORIES = {
     "NaiveLastValue":    "Baseline",
     "RollingMean":       "Baseline",
+    "HistoricalMean":    "Baseline",
     "Ridge":             "Linear",
     "Lasso":             "Linear",
     "ElasticNet":        "Linear",
@@ -29,6 +30,7 @@ _CATEGORIES = {
     "OrnsteinUhlenbeck": "Stochastic",
     "HMM":               "Regime",
     "MarkovSwitching":   "Regime",
+    "Ensemble":          "Ensemble",
 }
 
 _CATEGORY_COLORS = {
@@ -38,6 +40,7 @@ _CATEGORY_COLORS = {
     "Classical":  "#f59e0b",
     "Stochastic": "#60a5fa",
     "Regime":     "#f472b6",
+    "Ensemble":   "#c084fc",
 }
 
 _METRICS = {
@@ -70,6 +73,30 @@ _METRICS = {
         "lower_better": False,
         "format": ".3f",
         "plain": "If you bought when the model predicted up and sold when it predicted down, this is your risk-adjusted return. Above 1.0 is considered good.",
+    },
+    "oos_r2": {
+        "label": "OOS R² vs Mean",
+        "lower_better": False,
+        "format": ".4f",
+        "plain": "Campbell-Thompson (2008) out-of-sample R²: improvement in MSE over the historical mean baseline. Positive = beats the mean; negative = worse than just predicting the average return.",
+    },
+    "rank_ic": {
+        "label": "Rank IC",
+        "lower_better": False,
+        "format": ".4f",
+        "plain": "Spearman rank correlation between predicted and actual returns. Measures how well the model ranks returns for investment purposes. Higher is better.",
+    },
+    "max_drawdown": {
+        "label": "Max Drawdown",
+        "lower_better": True,
+        "format": ".2%",
+        "plain": "The worst peak-to-trough loss of the long/short strategy. Closer to 0% is better.",
+    },
+    "calmar_ratio": {
+        "label": "Calmar Ratio",
+        "lower_better": False,
+        "format": ".3f",
+        "plain": "Annualised strategy return divided by maximum drawdown. Higher means more return per unit of worst-case loss.",
     },
 }
 

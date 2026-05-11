@@ -1,6 +1,6 @@
 experiment:
-  name: xgboost_aapl
-  description: "XGBoost on AAPL daily returns"
+  name: xgboost_aapl_walkforward
+  description: "XGBoost on AAPL — expanding-window walk-forward CV (monthly refits)"
 
 data:
   loader: yfinance
@@ -24,7 +24,9 @@ model:
     subsample: 0.8
 
 evaluation:
-  test_size: 0.2
+  cv_method: expanding          # walk-forward: train grows from 2004 outward
+  min_train_size: 500           # ~2 years initial training window
+  step_size: 21                 # refit every ~21 trading days (monthly)
   metrics: [rmse, mae, r2, directional_accuracy, sharpe, oos_r2, rank_ic, max_drawdown, calmar_ratio]
 
 seed: 42
