@@ -57,13 +57,18 @@ def _fetch_fred(series_id: str, start: str, end: str) -> pd.Series | None:
         if data is None or data.empty:
             return None
         data.name = series_id
-        _CACHE_DIR.mkdir(parents=True, exist_ok=True)
-        cache_file = _cache_path(series_id)
-        pd.DataFrame(data).to_parquet(cache_file)
-        return data
     except Exception as exc:
         logger.warning("FRED fetch failed for '%s': %s", series_id, exc)
         return None
+
+    # Cache write is best-effort — a failure here must not discard good data
+    try:
+        _CACHE_DIR.mkdir(parents=True, exist_ok=True)
+        pd.DataFrame(data).to_parquet(_cache_path(series_id))
+    except Exception as exc:
+        logger.debug("FRED cache write skipped for '%s': %s", series_id, exc)
+
+    return data
 
 
 @register_loader("fred")
