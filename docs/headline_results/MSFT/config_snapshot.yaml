@@ -1,0 +1,45 @@
+data:
+  end: '2024-01-01'
+  loader: yfinance
+  missing: ffill
+  start: '2004-01-01'
+  ticker: MSFT
+evaluation:
+  cv_method: expanding
+  metrics:
+  - rmse
+  - mae
+  - r2
+  - directional_accuracy
+  - sharpe
+  - oos_r2
+  - rank_ic
+  - max_drawdown
+  - calmar_ratio
+  min_train_size: 500
+  step_size: 21
+experiment:
+  description: "XGBoost on AAPL \u2014 expanding-window walk-forward CV (monthly refits)"
+  name: xgboost_aapl_walkforward
+features:
+  lags:
+  - 1
+  - 2
+  - 3
+  - 5
+  - 10
+  rolling_windows:
+  - 5
+  - 10
+  - 20
+  target: next_return
+  technical_indicators: true
+model:
+  name: XGBoost
+  params:
+    learning_rate: 0.05
+    max_depth: 6
+    n_estimators: 200
+    random_state: 42
+    subsample: 0.8
+seed: 42

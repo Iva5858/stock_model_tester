@@ -839,8 +839,11 @@ def strategy():
 @strategy.command("optimize")
 @click.option("--tickers", required=True,
               help="Comma-separated list of tickers.")
-@click.option("--criterion", default="sharpe", show_default=True,
-              help="Metric to optimize model selection on.")
+@click.option("--criterion", default="oos_r2", show_default=True,
+              help="Metric to optimize model selection on. Defaults to OOS R^2 "
+                   "(vs. prevailing historical mean, Goyal & Welch 2008) rather than "
+                   "raw Sharpe, since Sharpe alone can pick single-split holdout runs "
+                   "with severe max drawdown -- see README Results section.")
 def optimize(tickers: str, criterion: str):
     """Select best model per ticker using ModelSelector and write strategy_recommendation.yaml."""
     import yaml

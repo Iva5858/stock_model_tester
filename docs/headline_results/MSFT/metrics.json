@@ -1,0 +1,33 @@
+{
+  "rmse": 0.01879483461380005,
+  "mae": 0.01289478037506342,
+  "r2": -0.1316075325012207,
+  "directional_accuracy": 0.49744387641698157,
+  "sharpe": 0.19961583883558137,
+  "oos_r2": -0.13135823716259631,
+  "rank_ic": 0.007064547066285809,
+  "max_drawdown": -0.4615870416164398,
+  "calmar_ratio": 0.12141338737760028,
+  "cv_method": "expanding",
+  "feature_names": [
+    "return_lag_1",
+    "return_lag_2",
+    "return_lag_3",
+    "return_lag_5",
+    "return_lag_10",
+    "rolling_ret_mean_5",
+    "rolling_ret_std_5",
+    "rolling_ret_mean_10",
+    "rolling_ret_std_10",
+    "rolling_ret_mean_20",
+    "rolling_ret_std_20",
+    "volume_delta",
+    "rsi_14",
+    "macd",
+    "macd_signal",
+    "bb_upper",
+    "bb_lower",
+    "bb_width"
+  ],
+  "schema_version": 1
+}

@@ -68,3 +68,9 @@ Features are a list of registered `FeatureTransform` objects applied in sequence
 ## README Maintenance
 
 After every session that adds features, changes the model list, adds CLI commands, or changes the config schema, update `README.md` to reflect the current state. The README is the single source of truth for users. Keep the Available Models table, CLI Reference, Metrics table, and Config Schema sections current.
+
+## Articles/techniques to expore
+
+- https://arxiv.org/abs/2412.20138    
+- https://github.com/TauricResearch/TradingAgents
+- https://tradingagents-ai.github.io/   

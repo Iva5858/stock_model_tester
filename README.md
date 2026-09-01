@@ -6,6 +6,24 @@ A Python framework for registering, running, and comparing stock return predicti
 
 ---
 
+## Results
+
+Best challenger model per ticker under **expanding-window walk-forward OOS evaluation**, backtested with a sign-based long/short strategy and **10bps realistic transaction costs** (`strategy backtest --cost-bps 10`), horizon = 1 day, 2006/2012–2023:
+
+| Ticker | Model   | OOS R² vs. historical mean | Directional accuracy | Rank IC | Gross Sharpe | Net Sharpe (10bps) | Net max drawdown | Buy & hold Sharpe (same window) |
+|--------|---------|----------------------------|-----------------------|---------|--------------|---------------------|-------------------|----------------------------------|
+| AAPL   | XGBoost | **-0.137**                 | 49.1%                 | -0.030  | -0.06        | **-0.34**           | -95.7%            | 0.96                             |
+| MSFT   | XGBoost | **-0.131**                 | 49.7%                 | 0.007   | 0.20         | **-0.13**           | -76.1%            | 0.74                             |
+| TSLA   | XGBoost | **-0.263**                 | 50.2%                 | 0.000   | 0.11         | **-0.04**           | -89.6%            | 1.04                             |
+
+*Reproduce: `python run.py strategy backtest --ticker <TICKER> --model XGBoost --cost-bps 10` after `python run.py run-all --ticker <TICKER>`. Raw metrics/equity-curve artifacts backing this table are checked in at [`docs/headline_results/`](docs/headline_results/) since `results/` is gitignored.*
+
+**Reading these honestly:** none of the 20 models in this suite beat the prevailing historical-mean baseline OOS on any of the three tickers (all OOS R² < 0), and cost-adjusted Sharpe is negative for all three once realistic transaction costs are applied — well below simple buy-and-hold over the same window. This is not a bug; it is the expected result. [Goyal & Welch (2008)](AI_Instructions/research/fpaper_2.pdf) is the canonical finding that most predictors fail to beat the prevailing mean out-of-sample at this frequency, and this framework's `strategy optimize` command is designed to surface that honestly rather than hide it — `--criterion` defaults to **OOS R²**, not raw Sharpe.
+
+That default matters: this project's own `strategy optimize` originally defaulted to selecting the highest raw-Sharpe experiment with no drawdown or CV-rigor check, and it picked an AAPL/XGBoost holdout run with **Sharpe 1.51** — which looks like a headline number until you check its max drawdown: **-99.99%**, effectively total capital loss, an artifact of a single train/test split with no walk-forward validation. Switching the selection criterion to OOS R² eliminates that false positive; every ticker now honestly recommends the `HistoricalMean` baseline because nothing beats it. The value here isn't a magic alpha signal — it's a pipeline that catches the Sharpe-without-drawdown-context trap instead of shipping it.
+
+---
+
 ## Setup
 
 ```bash

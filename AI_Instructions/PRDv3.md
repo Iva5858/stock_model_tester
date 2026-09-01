@@ -134,7 +134,7 @@ strategy/           experiments/              dashboard/   ← NEW (reads Result
 
 New rules:
 - `dashboard/` imports from `evaluation/` (ResultsStore) only — never from `strategy/`, `experiments/`, `data/`, or `features/` directly
-- `live/` (paper trading layer) imports from `strategy/` and `data/` only — it is a thin adapter between the strategy layer and a live data feed
+- `live/` (paper trading layer) imports from `strategy/` and `live/feed.py` (`BaseDataFeed`) only — it never imports from `data/` loaders directly. The `DataFeed` abstraction wraps all data access; `live/` is a thin adapter between the strategy layer and that abstraction
 - `analysis/` (statistical testing layer) imports from `evaluation/` only — pure statistics on arrays
 
 ### 3.3 Updated Directory Structure
@@ -194,9 +194,10 @@ stock_predictor/
 │
 ├── live/                         ← NEW package (paper trading)
 │   ├── __init__.py
-│   ├── feed.py                   ← BaseDataFeed + @register_feed
-│   ├── polygon_feed.py           ← @register_feed("polygon")
-│   └── paper_trader.py           ← PaperTrader: consumes StrategySpec, tracks P&L
+│   ├── feed.py                   ← BaseDataFeed ABC + @register_feed decorator
+│   ├── yfinance_feed.py          ← @register_feed("yfinance_live") — polling-based, testing only
+│   ├── polygon_feed.py           ← @register_feed("polygon") — websocket, production use
+│   └── paper_trader.py           ← PaperTrader: consumes StrategySpec + BaseDataFeed, tracks P&L
 │
 ├── configs/
 │   ├── ...v2 unchanged...
@@ -260,7 +261,7 @@ Research basis: rpaper_5 (Wang 2025) demonstrates that sentiment factors improve
 
 | ID | Requirement |
 |----|-------------|
-| EC-01 | `features/transforms/earnings_calendar.py` fetches earnings dates, EPS actuals, and EPS consensus estimates for the ticker (source: `yfinance.Ticker.earnings_dates` or `alpha_vantage` as fallback) |
+| EC-01 | `features/transforms/earnings_calendar.py` fetches earnings dates, EPS actuals, and EPS consensus estimates for the ticker. Primary source: `yfinance.Ticker.earnings_dates` for data from 2018 onwards. For dates before 2018, earnings features degrade gracefully to `NaN` — the transform logs a warning and continues. AlphaVantage is used as a fallback only when `ALPHAVANTAGE_KEY` is explicitly configured; it is never activated on the free tier due to rate limits that would silently corrupt walk-forward folds |
 | EC-02 | Features produced: `days_to_earnings` (integer countdown), `earnings_surprise_lag1` (previous quarter's normalised EPS surprise), `earnings_revision_30d` (analyst EPS revision momentum over 30 days). All shifted to prevent look-ahead |
 | EC-03 | `days_to_earnings` = 0 on the earnings date. Features are forward-filled between earnings dates |
 | EC-04 | The transform degrades gracefully if no earnings data is available for the ticker (e.g., ETFs, indices) |
@@ -286,7 +287,7 @@ Research basis: fpaper_2 (Goyal & Welch 2008) uses D/P and E/P (proxied by HML a
 | DL-04 | `@register("TCN")` — Temporal Convolutional Network with dilated causal convolutions |
 | DL-05 | All DL models carry a `search_space` dict for Optuna tuning (learning rate, hidden size, dropout, n_layers) |
 | DL-06 | Early stopping is applied within each walk-forward fold using a 10% validation split of the training window |
-| DL-07 | GAN data augmentation: `@register_transform("gan_augment")` — trains a conditional GAN on the training fold and augments with synthetic samples when `n_train < 1000`. Active only when the GAN transform is in the transforms list (opt-in). Never applied to the test fold |
+| DL-07 | GAN data augmentation: `@register_transform("gan_augment")` — trains a conditional GAN on the training fold and augments with synthetic samples when `n_train < 1000`. Before synthetic samples are used, a KS test is run comparing the generated distribution to the real training data. If the KS test p-value < 0.05 (distributions are significantly different), the synthetic samples are discarded, a warning is logged, and the fold proceeds with real data only. Active only when the `gan_augment` transform is in the transforms list (opt-in). Never applied to the test fold |
 
 Research basis: rpaper_10 (Vishwas 2025) — LSTM achieves 72% directional accuracy; Transformer attention captures long-range dependencies; GAN augmentation addresses the class imbalance problem in direction classification.
 
@@ -337,9 +338,9 @@ Research basis: rpaper_3 (Huang 2024) — Bayesian regularisation is more princi
 
 | ID | Requirement |
 |----|-------------|
-| PT-01 | `BaseDataFeed` ABC: `def get_latest(ticker: str) -> pd.Series` returns the most recent OHLCV bar. `@register_feed` decorator follows the same registry pattern |
-| PT-02 | `@register_feed("polygon")` — Polygon.io websocket feed. `@register_feed("yfinance_live")` — yfinance 1-minute delayed feed (free, for testing) |
-| PT-03 | `PaperTrader` accepts a `StrategySpec` (from `ModelSelector.recommend()`) and a `DataFeed`. On each new bar: loads latest features, runs the model's `predict()`, constructs a signal, records the position |
+| PT-01 | `BaseDataFeed` ABC defined in `live/feed.py`: `def get_latest(ticker: str) -> pd.Series` returns the most recent OHLCV bar. `@register_feed` decorator follows the same registry pattern. This is the only data interface `live/` uses — it never imports from `data/` loaders directly |
+| PT-02 | `@register_feed("yfinance_live")` — polling-based feed that calls `yfinance.download()` on a schedule to retrieve the most recent daily bar. Data is delayed by approximately 15 minutes and subject to yfinance's unofficial API stability. **For testing and development only — not suitable for production use.** `@register_feed("polygon")` — Polygon.io websocket feed for production paper trading. Requires `POLYGON_API_KEY` env var |
+| PT-03 | `PaperTrader` accepts a `StrategySpec` (from `ModelSelector.recommend()`) and a `BaseDataFeed`. On each new bar: loads latest features, runs the model's `predict()` using the **frozen model from the last `run` experiment** (no live retrain), constructs a signal, records the position |
 | PT-04 | `PaperTrader` tracks: `positions: dict[str, float]`, `cash: float`, `equity_history: list[tuple[datetime, float]]`, `trades: list[Trade]`. All persisted to `live/paper_trading_log.jsonl` |
 | PT-05 | `python run.py live start --tickers AAPL,MSFT --feed yfinance_live` launches the paper trading loop. Runs until `live stop` is called or the process exits |
 | PT-06 | `python run.py live status` prints current positions, unrealised P&L, and today's trades |
@@ -602,15 +603,17 @@ All 89 v2 tests remain unchanged and green.
 | BH correction | Assert Benjamini-Hochberg rejects exactly the right hypotheses for a known p-value vector |
 | MCS elimination | Assert MCS correctly eliminates the strictly inferior predictor in a 3-model toy example |
 | Sentiment transform no-leakage | Assert sentiment features at time t use only headlines from before t |
-| Earnings transform forward-fill | Assert `days_to_earnings` is correct at known earnings dates |
+| Earnings transform forward-fill | Assert `days_to_earnings` is correct at known earnings dates; assert pre-2018 dates return NaN without error |
 | Fama-French beta estimation | Assert rolling OLS betas are estimated on training data only, not test |
 | LSTM predict shape | Assert LSTM.predict() returns correct shape on synthetic data |
+| GAN KS gate | Assert that when generated samples fail KS test, fold proceeds with real data only and logs a warning |
 | CVaR allocator | Assert CVaR of resulting allocation ≤ CVaR of equal-weight baseline |
 | Factor risk covariance | Assert BΛBᵀ + Δ is positive semi-definite |
 | SQLiteResultsStore contract | Assert it satisfies the same test suite as FileResultsStore (parametrize existing tests over store type) |
-| Paper trader position tracking | Assert positions update correctly after signal change; assert cash decreases by cost_bps on trade |
+| Paper trader position tracking | Assert positions update correctly after signal change; assert cash decreases by cost_bps on trade; assert frozen model is used (no retrain) |
+| DataFeed DAG enforcement | Assert `paper_trader.py` imports only from `live/feed.py` and not from `data/` loaders directly |
 | Registry completeness v3 | Assert all new transforms, allocators, feeds are importable and instantiable |
-| DAG v3 | Assert `dashboard/` does not import from `strategy/`, `data/`, or `features/` |
+| DAG v3 | Assert `dashboard/` does not import from `strategy/`, `data/`, or `features/`; assert `live/` does not import from `data/` |
 
 ### New Integration Tests
 
@@ -625,18 +628,20 @@ All 89 v2 tests remain unchanged and green.
 
 ---
 
-## 11. Open Questions
+## 11. Resolved Design Decisions
 
-| # | Question | Priority |
-|---|----------|----------|
-| 1 | **Sentiment API default:** newsapi (requires key, higher quality) or Loughran-McDonald lexicon (offline, lower quality)? Both should be supported — which is the default when no key is set? | High |
-| 2 | **MCS implementation:** Use the bootstrap-based MCS (Hansen et al. 2011) or the simpler sequential pairwise DM elimination? Bootstrap is more rigorous but slower for large N. | High |
-| 3 | **SQLite vs MLflow as the production store:** Which should be the v3 default? SQLite is zero-dependency; MLflow has a richer UI but requires a server. Consider making SQLite default with MLflow opt-in | Medium |
-| 4 | **DL hardware detection:** Should the runner silently skip DL models on macOS ARM (current behaviour) or raise a clear error prompting the user to move to CUDA? Silent skip is user-friendly; explicit error prevents confusion | Medium |
-| 5 | **Cross-sectional model data format:** Stacking feature matrices across tickers into a single array couples the runner to a fixed universe. Should the cross-sectional path be a separate runner function or an extension of the existing one? | Medium |
-| 6 | **Paper trading refit frequency:** Should `PaperTrader` refit the model on new live data automatically (rolling retrain), or use the frozen model from the last `run` experiment? Frozen is safer; rolling retrain is more realistic | Medium |
-| 7 | **GAN augmentation stability:** Conditional GANs are notoriously training-unstable. Should the `gan_augment` transform validate that the generated samples pass a KS test against real training data before using them? | Low |
-| 8 | **Earnings data availability:** `yfinance.Ticker.earnings_dates` is unreliable for older history. Should the earnings transform only activate for recent periods (e.g., 2018+) and degrade for earlier dates? | Low |
+These questions were identified during v3 design and are resolved here. v4 depends on these answers being stable.
+
+| # | Question | Resolution |
+|---|----------|------------|
+| 1 | **Sentiment API default** | Loughran-McDonald lexicon is the default when no `NEWSAPI_KEY` is set. newsapi is used when the key is present. Both are always supported; the lexicon never requires network access |
+| 2 | **MCS implementation** | Bootstrap-based MCS (Hansen et al. 2011). More rigorous than sequential pairwise DM elimination. Acceptable performance at N ≤ 24 models (v3 universe). If N grows beyond 50 in a future version, revisit |
+| 3 | **Default result store** | `SQLiteResultsStore` is the v3 default. Zero external dependencies, fast filter queries, no server required. MLflow is opt-in via `results_store: mlflow` in config |
+| 4 | **DL hardware detection** | Silent skip on macOS ARM with a clear log message. An explicit error would break `run-all` on mixed hardware — the silent skip with a logged reason is the better failure mode |
+| 5 | **Cross-sectional model data format** | Separate runner function (`cv_mode: cross_sectional`). Stacking into the existing runner would couple it to a fixed universe and break the single-ticker path |
+| 6 | **Paper trading retrain** | **Frozen model.** The model fitted by the last `run` experiment is used unchanged throughout the paper trading session. Rolling live retrain is v5 scope — it requires a separate degradation-detection framework before it is safe to use with capital |
+| 7 | **GAN augmentation stability** | **KS-test gate.** Before synthetic samples are used in a fold, a KS test compares the generated distribution to real training data. If p < 0.05, synthetic samples are discarded and the fold uses real data only. Warning is logged |
+| 8 | **Earnings data availability** | **yfinance post-2018 only.** For dates before 2018, earnings features (`days_to_earnings`, `earnings_surprise_lag1`, `earnings_revision_30d`) are set to NaN. AlphaVantage fallback activates only when `ALPHAVANTAGE_KEY` is explicitly set — never on the free tier |
 
 ---
 
@@ -646,30 +651,37 @@ All 89 v2 tests remain unchanged and green.
 
 - Statistical validation: DM test in compare, Model Confidence Set, Benjamini-Hochberg FDR
 - Sentiment transform (newsapi + Loughran-McDonald fallback), earnings transform, Fama-French transform
-- GAN augmentation transform (opt-in)
+- GAN augmentation transform (opt-in, with KS-test gate)
 - LSTM, Transformer, TCN re-enabled on CUDA Linux
 - BayesianLASSO, PartiallyProtectedLASSO models
 - Cross-sectional LambdaMART ranking model
-- `SQLiteResultsStore` and `MLflowResultsStore` implementations
+- `SQLiteResultsStore` (default) and `MLflowResultsStore` (opt-in)
 - Streamlit dashboard (4 pages, read-only)
-- Paper trading loop (yfinance_live and Polygon feeds)
+- Paper trading loop (`yfinance_live` polling feed for testing; Polygon websocket feed for production)
 - CVaR and factor-risk allocators
 - Multi-period rebalancing in Backtester
 - Distributed walk-forward via Dask/Ray (opt-in)
 - Polygon and AlphaVantage data loaders
 - `analyze`, `live`, `results-store` CLI command groups; `serve` command
 
-### v4.0 — Future Candidates
+### v4.0 — see `PRDv4.md`
 
-- **Options / derivatives pricing signals** — implied volatility surface as a feature
-- **Fixed income + cross-asset** — equity-bond correlation regime models
-- **Agent-based trading** — RL policy trained against the backtester as an environment
-- **Federated learning** — train models across institutions without sharing raw data
-- **Real brokerage integration** — Interactive Brokers / Alpaca execution layer (currently paper-trading only)
-- **Intraday / HF data** — extend the pipeline to minute-bar or tick-bar frequency
-- **Earnings call NLP** — transcript-level sentiment beyond headline sentiment
-- **Knowledge graph features** — supply chain relationships, sector membership, ESG scores
-- **Automated feature discovery** — symbolic regression or genetic programming over the feature space (rpaper_9)
+- Real brokerage execution: Alpaca (primary) and IBKR (optional)
+- `BaseBroker` ABC, `OrderManager`, `PositionManager`, `RiskGuard`, `ExecutionLoop`, `ExecutionStore`
+- Execution Monitor dashboard page (5th Streamlit page)
+- `execution live`, `execution status`, `execution history`, `execution reconcile` CLI commands
+
+### v5.0 — Future Candidates
+
+- Rolling live model retrain with degradation detection
+- Options / derivatives pricing signals
+- Fixed income + cross-asset regime models
+- Agent-based RL trading
+- Federated learning
+- Intraday / HF data
+- Earnings call NLP
+- Knowledge graph features
+- Automated feature discovery
 
 ---
 
@@ -677,17 +689,18 @@ All 89 v2 tests remain unchanged and green.
 
 | Term | Definition |
 |------|------------|
-| **Model Confidence Set (MCS)** | The set of models that cannot be statistically eliminated as inferior at a given confidence level. Implements Hansen, Lunde, Nason (2011). The v3 replacement for simple "best model" selection when the universe is large. |
-| **Diebold-Mariano (DM) test** | Statistical test of equal predictive accuracy between two models (Harvey-Leybourne-Newbold corrected for small samples). Available in v2 as a function; wired into `compare` in v3. |
-| **FDR (False Discovery Rate)** | The expected fraction of rejected null hypotheses that are true nulls. Controlled via Benjamini-Hochberg correction when running pairwise DM tests across N models. |
-| **CVaR (Conditional Value at Risk)** | Expected loss in the worst α% of scenarios (also called Expected Shortfall). Used by the `cvar` allocator to construct downside-risk-aware portfolios. |
-| **Factor Risk Model** | Covariance estimated as BΛBᵀ + Δ using Fama-French factor loadings B and factor covariance Λ. More stable than sample covariance for large universes. |
-| **Cross-sectional model** | A model that predicts the *rank* of a ticker's return within a universe on a given date, rather than the return level. Evaluated by cross-sectional Rank IC and NDCG. |
-| **LambdaMART** | Gradient boosted trees with a learning-to-rank loss function. Optimises NDCG directly, making it the standard cross-sectional ranking model. |
-| **GAN augmentation** | Generative Adversarial Network trained on the training fold to produce synthetic return samples. Used to address small-sample and class-imbalance problems in direction classification. |
-| **PaperTrader** | The v3 live simulation layer. Consumes a `StrategySpec` and a live data feed; updates positions and tracks P&L without real capital. |
-| **BaseDataFeed** | Abstract interface for live data. Implementations: `yfinance_live` (delayed, free), `polygon` (real-time, API key required). |
-| **SQLiteResultsStore** | v3 implementation of `ResultsStore` backed by a single SQLite database. Zero-dependency, fast for filter queries, replaces filesystem directory scanning. |
-| **Sentiment score** | Rolling mean of daily headline sentiment for a ticker (Loughran-McDonald lexicon or FinBERT). Shifted by 1 day to prevent look-ahead. |
-| **Earnings surprise** | Normalised difference between reported EPS and consensus estimate: `(actual - estimate) / abs(estimate)`. One of the most consistently significant short-term catalysts in the literature. |
-| **Publication lag** | The delay between when an economic data point is *measured* and when it is *released*. Enforced in v2 for FRED series; extended in v3 to earnings revisions and factor data. |
+| **Model Confidence Set (MCS)** | The set of models that cannot be statistically eliminated as inferior at a given confidence level. Implements Hansen, Lunde, Nason (2011) bootstrap procedure. The v3 replacement for simple "best model" selection when the universe is large |
+| **Diebold-Mariano (DM) test** | Statistical test of equal predictive accuracy between two models (Harvey-Leybourne-Newbold corrected for small samples). Available in v2 as a function; wired into `compare` in v3 |
+| **FDR (False Discovery Rate)** | The expected fraction of rejected null hypotheses that are true nulls. Controlled via Benjamini-Hochberg correction when running pairwise DM tests across N models |
+| **CVaR (Conditional Value at Risk)** | Expected loss in the worst α% of scenarios (also called Expected Shortfall). Used by the `cvar` allocator to construct downside-risk-aware portfolios |
+| **Factor Risk Model** | Covariance estimated as BΛBᵀ + Δ using Fama-French factor loadings B and factor covariance Λ. More stable than sample covariance for large universes |
+| **Cross-sectional model** | A model that predicts the *rank* of a ticker's return within a universe on a given date, rather than the return level. Evaluated by cross-sectional Rank IC and NDCG |
+| **LambdaMART** | Gradient boosted trees with a learning-to-rank loss function. Optimises NDCG directly, making it the standard cross-sectional ranking model |
+| **GAN augmentation** | Generative Adversarial Network trained on the training fold to produce synthetic return samples. Subject to a KS-test gate before use — synthetic samples are discarded if their distribution differs significantly from real training data |
+| **BaseDataFeed** | Abstract interface in `live/feed.py` for live data access. All `live/` code uses this interface only — never `data/` loaders directly. Implementations: `yfinance_live` (polling, 15-minute delayed, testing only), `polygon` (websocket, production) |
+| **PaperTrader** | The v3 live simulation layer. Consumes a `StrategySpec` and a `BaseDataFeed`; updates positions and tracks P&L without real capital. Uses a frozen model — no live retrain |
+| **SQLiteResultsStore** | v3 default implementation of `ResultsStore`. Backed by a single SQLite database. Zero-dependency, fast for filter queries |
+| **Sentiment score** | Rolling mean of daily headline sentiment for a ticker (Loughran-McDonald lexicon default, or FinBERT via newsapi). Shifted by 1 day to prevent look-ahead |
+| **Earnings surprise** | Normalised difference between reported EPS and consensus estimate: `(actual - estimate) / abs(estimate)`. Available for post-2018 data only via yfinance |
+| **Publication lag** | The delay between when an economic data point is measured and when it is released. Enforced in v2 for FRED series; extended in v3 to earnings revisions and factor data |
+| **Frozen model** | The model fitted by the last `run` experiment, used unchanged during paper trading. No live retrain occurs in v3 |
